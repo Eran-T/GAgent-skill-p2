@@ -1,0 +1,13 @@
+[project]
+name = "agentic-discovery-demo"
+version = "0.1.0"
+description = "A demo showcasing dynamic discovery, A2A communication, and Agent Mesh capabilities on Vertex AI."
+dependencies = [
+    "google-adk>=1.21.0",
+    "google-cloud-storage>=2.14.0",
+    "httpx>=0.27.0",
+    "protobuf>=5.26.1",
+]
+
+[tool.ruff]
+line-length = 88

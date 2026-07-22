@@ -1,0 +1,18 @@
+name: "agentic-discovery-demo"
+acli_version: "0.2.0"
+agent_directory: "backend"
+region: "us-central1"
+
+entrypoint_module: "backend.agent"
+entrypoint_object: "agent_runtime"
+
+base_template: "local_Gagent-skills"
+generated_at: "2026-07-20T13:41:00+00:00"
+language: "python"
+create_params:
+  deployment_target: "agent_runtime"
+  session_type: "none"
+  cicd_runner: "skip"
+  include_data_ingestion: false
+  
+  datastore: "none"
