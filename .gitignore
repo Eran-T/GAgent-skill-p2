@@ -1,0 +1,8 @@
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc
+.venv/
+
+# Skills compiled on demand by agent-discovery/scripts/sync_agents.py
+skills/discovered/*/

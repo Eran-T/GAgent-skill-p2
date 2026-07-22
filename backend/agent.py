@@ -48,6 +48,30 @@ app = App(
 )
 
 
+def _apply_delegated_credentials(user_access_token: str = ""):
+    """
+    Maps the caller's delegated OAuth2 token onto the catalog agent so downstream
+    Dataplex/BigQuery tool calls execute on behalf of the caller. Falls back to
+    the runtime service account when no delegated token is supplied.
+
+    Shared by both the A2A (`handle_a2a_request`) and streaming (`stream_query`)
+    entrypoints so delegated auth behaves identically on every route.
+    """
+    creds = None
+    if user_access_token:
+        os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"] = user_access_token
+        creds = Credentials(token=user_access_token)
+    elif os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN"):
+        creds = Credentials(token=os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN"))
+
+    if creds:
+        catalog_agent.model.client_kwargs["credentials"] = creds
+        creds_config = BigQueryCredentialsConfig(credentials=creds)
+        catalog_agent.tools = [BigQueryToolset(credentials_config=creds_config)]
+    else:
+        catalog_agent.tools = [BigQueryToolset()]
+
+
 class A2AServerWrapper:
     """
     Implements a JSON-RPC 2.0 A2A (Agent-to-Agent) compliance wrapper
@@ -96,21 +120,8 @@ class A2AServerWrapper:
                 user_id = data_block.get("user_id", "")
                 user_access_token = data_block.get("user_access_token", "")
 
-        # 3. Dynamic authentication context mapping
-        creds = None
-        if user_access_token:
-            # Set the credential in the environment for downstream Google APIs to consume
-            os.environ["GOOGLE_OAUTH_ACCESS_TOKEN"] = user_access_token
-            creds = Credentials(token=user_access_token)
-        elif os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN"):
-            creds = Credentials(token=os.environ.get("GOOGLE_OAUTH_ACCESS_TOKEN"))
-
-        if creds:
-            catalog_agent.model.client_kwargs["credentials"] = creds
-            creds_config = BigQueryCredentialsConfig(credentials=creds)
-            catalog_agent.tools = [BigQueryToolset(credentials_config=creds_config)]
-        else:
-            catalog_agent.tools = [BigQueryToolset()]
+        # 3. Dynamic authentication context mapping (delegated caller token)
+        _apply_delegated_credentials(user_access_token)
 
         # 4. Invoke agent model
         try:
@@ -167,10 +178,15 @@ class KnowledgeCatalogEngine:
         """
         return self.server.handle_a2a_request(input)
 
-    def stream_query(self, message: str, user_id: str, session_id: str = None) -> Generator[Dict[str, Any], None, None]:
+    def stream_query(self, message: str, user_id: str, session_id: str = None,
+                     user_access_token: str = "") -> Generator[Dict[str, Any], None, None]:
         """
-        Standard streaming route.
+        Standard streaming route. Honors the same delegated-auth contract as the
+        A2A path: when a caller token is supplied, Dataplex/BigQuery tools run on
+        behalf of the caller.
         """
+        _apply_delegated_credentials(user_access_token)
+
         runner = InMemoryRunner(app=app)
         runner.auto_create_session = True
 

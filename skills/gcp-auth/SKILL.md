@@ -31,4 +31,4 @@ When invoking any external GCP service, reasoning engines, or agent registry API
 ## 📖 Context & Commands Syntax Reference
 
 Refer to the complete syntax reference document:
-[@skills/gcp-auth/references/gcp-auth-context.md](file:///Users/erantal/Documents/antigrav%20projects/Gagent-skills/agentic-discovery-demo/skills/gcp-auth/references/gcp-auth-context.md)
+[references/gcp-auth-context.md](./references/gcp-auth-context.md)

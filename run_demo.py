@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import sys
 import json
 import subprocess
@@ -9,7 +10,9 @@ import google.auth.transport.requests
 
 # ==============================================================================
 # 🚀 Unified Dynamic Agent Mesh Demo Runner
-# This script runs the entire sequence: Discovery -> Auth -> streamQuery.
+# This script runs the entire sequence: Discovery -> Auth -> A2A query.
+# The endpoint is NOT hardcoded — it is resolved at runtime from the discovered
+# agent card (via sync_agents.py), exactly as a real client mesh would.
 # Requires only standard python libraries (httpx, google-auth).
 # ==============================================================================
 
@@ -19,8 +22,25 @@ YELLOW = "\033[0;33m"
 RED = "\033[0;31m"
 NC = "\033[0m"
 
-# The live, telemetry-observed google-adk engine streamQuery URN
-REASONING_ENGINE_URL = "https://us-central1-aiplatform.googleapis.com/v1/projects/<PROJECT_NUMBER>/locations/us-central1/reasoningEngines/<ENGINE_ID>:streamQuery"
+DISCOVERED_SKILL_PATH = "./skills/discovered/knowledge-catalog-agent/SKILL.md"
+
+
+def resolve_endpoint(discovered_skill_path: str) -> str:
+    """
+    Reads the reachable agent endpoint that discovery stamped into the discovered
+    skill's `discovery.agent_endpoint` frontmatter field. This is the whole point
+    of Part 2: the client learns where to send the query at runtime instead of
+    carrying a hand-wired URN.
+    """
+    try:
+        with open(discovered_skill_path) as fh:
+            content = fh.read()
+        m = re.search(r"agent_endpoint:\s*(\S+)", content)
+        if m and m.group(1) not in ("", "UNRESOLVED"):
+            return m.group(1)
+    except FileNotFoundError:
+        pass
+    return ""
 
 
 def run_command(cmd, desc):
@@ -60,85 +80,93 @@ def main():
     )
 
     # Confirm discovered skill file exists
-    discovered_skill_path = "./skills/discovered/knowledge-catalog-agent/SKILL.md"
-    if os.path.exists(discovered_skill_path):
-        print(f"{GREEN}✓ Remote capability skill discovered and written to: {discovered_skill_path}{NC}")
+    if os.path.exists(DISCOVERED_SKILL_PATH):
+        print(f"{GREEN}✓ Remote capability skill discovered and written to: {DISCOVERED_SKILL_PATH}{NC}")
     else:
         print(f"{RED}✗ Discovered skill file not found!{NC}")
         sys.exit(1)
 
-    # --- PHASE 2: AUTHENTICATION ---
+    # --- PHASE 2: RESOLVE ENDPOINT FROM DISCOVERY (no hardcoded URN) ---
+    endpoint = resolve_endpoint(DISCOVERED_SKILL_PATH)
+    if not endpoint:
+        print(f"{RED}✗ No reachable endpoint advertised in the discovered card. "
+              f"Deploy the backend (agents-cli deploy) so deployment_metadata.json "
+              f"is populated, then re-run discovery.{NC}")
+        sys.exit(1)
+    print(f"{GREEN}✓ Resolved agent endpoint dynamically from discovery: {endpoint}{NC}")
+
+    # --- PHASE 3: AUTHENTICATION ---
     token = get_gcp_token()
     user_email = "admin@example.com"
 
-    # --- PHASE 3: DISPATCH STREAM QUERY ---
-    print(f"\n{BLUE}💬 Phase 3: Dispatching streamQuery Payload to Live ADK Agent...{NC}")
-    
-    prompt = "Please query the Dataplex catalog in project <PROJECT_ID> to find campaign schemas and tables."
-    
-    payload = {
-        "class_method": "stream_query",
-        "input": {
-            "message": prompt,
-            "user_id": user_email
-        }
+    # --- PHASE 4: DISPATCH A2A message/send QUERY ---
+    print(f"\n{BLUE}💬 Phase 4: Dispatching A2A JSON-RPC payload to the deployed agent...{NC}")
+
+    prompt = "Please query the Dataplex catalog to find campaign schemas and tables."
+
+    # A2A JSON-RPC 2.0 message/send, per the a2a-protocol skill: text prompt +
+    # a DataPart carrying the delegated caller token so the backend runs Dataplex
+    # tools on our behalf. Token is ALSO in the Authorization header for transport.
+    a2a_request = {
+        "jsonrpc": "2.0",
+        "id": "demo-req-001",
+        "method": "message/send",
+        "params": {
+            "contextId": "demo-session-001",
+            "message": {
+                "role": "user",
+                "parts": [
+                    {"kind": "text", "text": prompt},
+                    {"kind": "data", "data": {
+                        "user_id": user_email,
+                        "user_access_token": token,
+                    }},
+                ],
+            },
+        },
     }
 
-    print(f"{BLUE}🚀 Sending streamQuery connection payload...{NC}")
-    print(f"Endpoint: {REASONING_ENGINE_URL}")
-    
+    # The Agent Runtime `:query` hook dispatches `input` to handle_a2a_request().
+    payload = {"class_method": "query", "input": a2a_request}
+
+    print(f"{BLUE}🚀 Sending A2A query payload...{NC}")
+    print(f"Endpoint: {endpoint}")
+
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
-    # Dispatch HTTP POST for streaming lines
     try:
         print(f"\n{GREEN}================================================================{NC}")
-        print(f"{GREEN}📊 AGENT EXECUTION LOGS & RESPONSES (STREAMING):{NC}")
+        print(f"{GREEN}📊 AGENT EXECUTION RESPONSE:{NC}")
         print(f"{GREEN}================================================================{NC}")
-        
-        with httpx.Client() as client:
-            with client.stream("POST", REASONING_ENGINE_URL, json=payload, headers=headers, timeout=60.0) as r:
-                if r.status_code != 200:
-                    print(f"{RED}✗ Request failed with status {r.status_code}:{NC}\n{r.read().decode('utf-8')}")
-                    sys.exit(1)
-                
-                # Stream each response block
-                for line in r.iter_lines():
-                    if not line:
-                        continue
-                    try:
-                        # Ensure string format
-                        line_str = line.decode('utf-8') if isinstance(line, bytes) else line
-                        data = json.loads(line_str)
-                        
-                        # Support flat chunk structure
-                        if "chunk" in data:
-                            print(data["chunk"], end="", flush=True)
-                            continue
-                            
-                        # Support standard content.parts structure
-                        content = data.get("content", {})
-                        parts = content.get("parts", [])
-                        for part in parts:
-                            # 1. Capture tool call attempts
-                            if "function_call" in part:
-                                call = part["function_call"]
-                                print(f"\n{YELLOW}🛠️  [Tool Call]: {call.get('name')} with arguments {call.get('args')}{NC}")
-                            
-                            # 2. Capture tool responses
-                            elif "function_response" in part:
-                                resp = part["function_response"]
-                                print(f"{YELLOW}📝 [Tool Response]: {resp.get('response')}{NC}")
-                            
-                            # 3. Capture streaming textual outputs
-                            elif "text" in part:
-                                print(part["text"], end="", flush=True)
-                    except Exception:
-                        # Print raw line if not parsed to JSON
-                        print(line)
-        
+
+        r = httpx.post(endpoint, json=payload, headers=headers, timeout=60.0)
+        if r.status_code != 200:
+            print(f"{RED}✗ Request failed with status {r.status_code}:{NC}\n{r.text}")
+            sys.exit(1)
+
+        data = r.json()
+
+        # A2A JSON-RPC error object
+        if "error" in data:
+            print(f"{RED}✗ Agent returned JSON-RPC error: {data['error']}{NC}")
+            sys.exit(1)
+
+        # Extract text from result/message/parts per the a2a-protocol response schema
+        result = data.get("result", {})
+        parts = result.get("message", {}).get("parts", [])
+        for part in parts:
+            if "text" in part:
+                print(part["text"], end="", flush=True)
+
+        artifacts = result.get("artifacts", [])
+        if artifacts:
+            print(f"\n\n{YELLOW}📎 Artifacts returned:{NC}")
+            for art in artifacts:
+                print(f"  - {art}")
+
         print(f"\n{GREEN}================================================================{NC}")
         print(f"{GREEN}🎉 Demo completed successfully!{NC}\n")
 

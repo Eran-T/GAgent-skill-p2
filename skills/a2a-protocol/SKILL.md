@@ -48,4 +48,4 @@ To trigger memory-bank history recall at the backend reasoning engine, you **MUS
 ## 📖 Complete JSON Payload Specs & Code Blueprints
 
 For complete, copy-pasteable Python implementation codes and nested JSON examples, read:
-[@skills/a2a-protocol/references/a2a-payload-context.md](file:///Users/erantal/Documents/antigrav%20projects/Gagent-skills/agentic-discovery-demo/skills/a2a-protocol/references/a2a-payload-context.md)
+[references/a2a-payload-context.md](./references/a2a-payload-context.md)

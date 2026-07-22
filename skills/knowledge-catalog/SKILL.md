@@ -18,8 +18,12 @@ To query metadata from the backend Knowledge Catalog agent:
 
 2.  **Construct A2A Payload:**
     Compose a standard A2A JSON-RPC query according to the `a2a-protocol` guidelines:
-    *   Set the target backend engine endpoint:
-        `https://us-central1-aiplatform.googleapis.com/v1/projects/598891584738/locations/us-central1/reasoningEngines/5743002669304250368:query`
+    *   **Resolve the target endpoint dynamically — do NOT hardcode a URN.**
+        When this skill is consumed as a *discovered* skill (`skills/discovered/<agent_name>/SKILL.md`),
+        read the endpoint from this file's own `discovery.agent_endpoint` frontmatter
+        field, which the `agent-discovery` sync stamps in from the agent's
+        registration card (`[AGENT_URI:...]`). This is the reachable
+        `...:query` endpoint for the deployed Agent Runtime.
     *   Inject the generated OAuth2 access token in the `Authorization` header.
     *   Pass the user ID and token inside the `DataPart` parameters of the `message/parts` array to trigger the backend memory bank and grant delegated Dataplex tool permissions.
 
